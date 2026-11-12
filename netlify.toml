@@ -1,0 +1,9 @@
+[build]
+  publish = "."
+  command = ""
+
+# Always fetch the latest game when online, so updates show up on next launch.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache"
