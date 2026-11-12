@@ -100,8 +100,11 @@ async def run_pair(browser, url, libs, mode, errors):
     called = await wait_for(lambda: _gt(b, 'callN', before), 5)
     check(f'[{mode}] call is heard', bool(called))
 
+    # move the hen a few metres off first: right beside your mate, Space is Preen, not Dabble
+    me_b = await b.evaluate('(()=>{const m=window.__pond.me();return [m.x,m.z]})()')
+    await b.evaluate(JS_PLACE, [me_b[0] + 4, me_b[1], 0]); await wait_game(b, 0.8)
     await b.keyboard.press(' ')
-    dabble = await wait_for(lambda: _act(a, 'dabble'), 5)
+    dabble = await wait_for(lambda: _act(a, 'dabble'), 8)
     check(f'[{mode}] dabble plays on the other screen', bool(dabble))
     return a, b
 
@@ -155,6 +158,65 @@ async def run_extras(a, b, mode):
     check(f'[{mode}] perch: flies up onto the nest box', m['perch'] == 4 and m['y'] > box['a']['y'], f"y={m['y']:.2f} roof={box['a']['y']:.2f}")
     await a.keyboard.press('e'); await wait_game(a, 1.8)
 
+
+JS_PLACE = """([x,z,h]) => { const m = window.__pond.me(); m.x = x; m.z = z; m.h = h; m.spd = 0; m.hop = null; m.perch = -1; m.yS = null; m.act = null; }"""
+
+async def run_behaviours(a, b, mode):
+    """Pass-two behaviours, checked across both screens. a is the drake, b the hen."""
+    await a.bring_to_front()
+    # forage: stand with the bill over an acorn and peck
+    ac = next(x for x in await a.evaluate('window.__pond.acorns()') if not x['eaten'])
+    before = await a.evaluate('window.__pond.acornsEaten()')
+    await a.evaluate(JS_PLACE, [ac['x'], ac['z'] - 0.45, 0]); await wait_game(a, 0.6)
+    await a.keyboard.press(' '); await wait_game(a, 1.5)
+    after = await a.evaluate('window.__pond.acornsEaten()')
+    check(f'[{mode}] forage: pecking on land eats an acorn', after == before + 1, f'{before} -> {after}')
+    # drake display: drake calls near the hen, hen's screen shows the head-bob display
+    await a.evaluate(JS_PLACE, [0, 0, 0]); await b.evaluate(JS_PLACE, [1.6, 0, 0])
+    await wait_game(a, 0.8); await wait_game(b, 0.8)
+    await a.keyboard.press('q')
+    shown = await wait_for(lambda: _remote_act(b, 'display'), 8)
+    check(f'[{mode}] drake call near the hen becomes a head-bob display', bool(shown))
+    # mutual preening: side by side on the bank, both preen
+    pt = await a.evaluate(JS_SHORE_POINT, 1.5)
+    await a.evaluate(JS_PLACE, [pt[0], pt[1], 0]); await b.evaluate(JS_PLACE, [pt[0] + 0.7, pt[1], 0])
+    await wait_game(a, 1.0); await wait_game(b, 1.0)
+    label = await a.evaluate("document.getElementById('bDabble').dataset.l")
+    check(f'[{mode}] next to your mate the main button becomes Preen', label == 'Preen', label)
+    n0 = await a.evaluate('window.__pond.mutualN()')
+    await a.keyboard.press(' '); await b.keyboard.press(' ')
+    mutual = await wait_for(lambda: _gt_val(a, 'window.__pond.mutualN()', n0), 15)
+    check(f'[{mode}] both preening side by side is a mutual preen', bool(mutual))
+    # flush: double-tap flap, fly to open water, partner sees you in the air
+    await a.evaluate(JS_PLACE, [0, 0, 0]); await wait_game(a, 0.8)
+    await a.keyboard.press('f'); await a.keyboard.press('f')
+    peak_me, peak_seen = 0, 0
+    end = time.time() + 40
+    while time.time() < end:
+        m = await a.evaluate('(()=>{const m=window.__pond.me();return {y:m.g.position.y,hop:!!m.hop}})()')
+        r = await b.evaluate('window.__pond.remotes()')
+        peak_me = max(peak_me, m['y']); peak_seen = max(peak_seen, r[0]['y'] if r else 0)
+        if peak_me > 1 and not m['hop'] and peak_seen > 1: break
+        await asyncio.sleep(0.2)
+    m = await a.evaluate('(()=>{const m=window.__pond.me();return {x:m.x,z:m.z,hop:!!m.hop}})()')
+    wet = await a.evaluate('([x,z])=>window.__pond.edgeD(x,z)', [m['x'], m['z']])
+    dist = (m['x'] ** 2 + m['z'] ** 2) ** .5
+    check(f'[{mode}] flush: double-tap flap flies up and lands on open water', peak_me > 1.5 and not m['hop'] and wet < -3 and dist > 15, f'peak {peak_me:.1f} m, flew {dist:.0f} m')
+    check(f'[{mode}] partner sees you flying', peak_seen > 1.0, f'peak seen {peak_seen:.1f} m')
+    # dusk roost: sitting still at night tucks the head
+    await a.evaluate('window.__pond.setTime(0.92)'); await a.evaluate(JS_PLACE, [0, 0, 0])
+    await wait_game(a, 9.5)
+    tuck = await a.evaluate('window.__pond.me().tuck')
+    await a.evaluate('window.__pond.setTime(null)')
+    check(f'[{mode}] roost: a still duck at night tucks its head', bool(tuck))
+
+async def _remote_act(p, act):
+    r = await p.evaluate('window.__pond.remotes()')
+    return r and r[0]['act'] == act
+
+async def _gt_val(p, expr, v):
+    return (await p.evaluate(expr)) > v
+
 async def _perched(p, idx):
     r = await p.evaluate('window.__pond.remotes()')
     return r and r[0]['perch'] == idx and r[0]['y'] > 0.45
@@ -189,6 +251,7 @@ async def main():
         # inside Claude
         a, b = await run_pair(browser, 'http://127.0.0.1:8765/index.html', libs, 'room', errors)
         await run_extras(a, b, 'room')
+        await run_behaviours(a, b, 'room')
         await b.close(run_before_unload=True)
         gone = await wait_for(lambda: _none(a), 8)
         check('[room] partner leaving clears their duck', bool(gone))

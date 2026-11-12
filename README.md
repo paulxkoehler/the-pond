@@ -19,15 +19,27 @@ On the hosted version, each duck's position goes through a free public MQTT brok
 
 An earlier version tried direct device-to-device links (PeerJS). Those failed between real phones and laptops on different networks, so it was replaced.
 
+## Wood duck behaviours
+
+* **Perching:** wood ducks are among the few ducks with claws for perching. Hop onto the log, the leaning snag, the island rock, the oak stump or the nest box.
+* **Foraging:** acorns are a big part of their autumn diet. Peck them up under the oaks on the oak point (they regrow after a couple of minutes).
+* **Preening:** preen when perched; beside your mate, preen each other. Both preening at once is a mutual preen.
+* **Courtship:** pairs form in autumn. A drake calling near a hen bobs his head, then turns the back of his crest toward her.
+* **Flushing:** double-tap Flap to take off with an alarm call and fly to open water. Your mate (and the wild companion, when you're solo) follows you in the air.
+* **Roosting:** at dusk and night, a duck that sits still tucks its head onto its back.
+
+Add `?time=0.8` to the URL to jump to dusk on that device (handy for seeing the roost; it puts your sky out of step with your mate's).
+
 ## Controls
 
 | | Phone | Keyboard |
 | --- | --- | --- |
 | Swim | Drag on the left half | WASD / arrows |
 | Look | Drag on the right half | Drag with the mouse, scroll to zoom |
-| Dabble | Dabble button | Space |
+| Dabble (water) · Forage (land) · Preen (perched or beside your mate) | Main button, which changes with where you are | Space |
 | Call | Call button | Q |
 | Flap | Flap button | F |
+| Fly (flush to open water) | Double-tap Flap | F F |
 | Perch / hop down | Perch button (appears near a log, snag, rock, stump or the nest box) | E |
 
 ## Tests

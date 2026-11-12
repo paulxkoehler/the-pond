@@ -116,10 +116,10 @@ h1{margin:0;font-family:var(--serif);font-weight:400;font-style:italic;font-size
 <div id="acts" hidden>
   <button class="act" id="bDabble" type="button"><span>Dabble<span class="k">space</span></span></button>
   <button class="act" id="bCall" type="button"><span>Call<span class="k">q</span></span></button>
-  <button class="act" id="bFlap" type="button"><span>Flap<span class="k">f</span></span></button>
+  <button class="act" id="bFlap" type="button"><span>Flap<span class="k">2× fly</span></span></button>
   <button class="act" id="bPerch" type="button" hidden><span>Perch<span class="k">e</span></span></button>
 </div>
-<div id="keys" hidden>wasd / arrows swim · e perch · drag to look · scroll to zoom</div>
+<div id="keys" hidden>wasd / arrows swim · space dabble/forage/preen · q call · f flap, ff fly · e perch · drag to look</div>
 <div id="joy" hidden><i></i></div>
 <div id="arrow" hidden><span>mate</span></div>
 
@@ -304,6 +304,7 @@ const heron=new THREE.Group();
  const pl=new THREE.Mesh(new THREE.BoxGeometry(.03,.03,.35),dk);pl.position.set(0,.08,-.2);pl.rotation.x=-.4;hg.add(pl);
  heron.userData.head=hg;const a=1.7,r=shoreR(a)-1.3;heron.position.set(Math.cos(a)*r,terrainH(Math.cos(a)*r,Math.sin(a)*r),Math.sin(a)*r);heron.rotation.y=-a-Math.PI/2+.4;scene.add(heron);}
 
+const ACORNS=[];let acornM=null;
 /* perches: places a wood duck can hop up onto. Each is a segment (a→b) on top of something. */
 const PERCHES=[];
 function addPerch(name,ax,ay,az,bx,by,bz){PERCHES.push({name,a:{x:ax,y:ay,z:az},b:{x:bx,y:by,z:bz}});}
@@ -325,9 +326,9 @@ function nearestPerch(D){let best=-1,bd=2.6;PERCHES.forEach((P,i)=>{const p=perc
  // 4 nest box roof (built above)
  {const a2=.42,r2=shoreR(a2)+2.4,bx=Math.cos(a2)*r2,bz=Math.sin(a2)*r2,by=terrainH(bx,bz);addPerch('nest box',bx,by+3.88,bz,bx,by+3.88,bz);}
  // acorns under the oaks, for foraging
- const ac=new THREE.InstancedMesh(new THREE.IcosahedronGeometry(.05,0),new THREE.MeshStandardMaterial({color:0x6b4a24,flatShading:true}),140);let n=0;
- for(let i=0;i<400&&n<140;i++){const a=OAK_A+(R()-.5)*.36,r=shoreR(a)+.8+R()*3.6,x=Math.cos(a)*r,z=Math.sin(a)*r;if(edgeD(x,z)<.4)continue;dummy.position.set(x,terrainH(x,z)+.03,z);dummy.rotation.set(R()*3,R()*3,0);dummy.scale.set(1,1.3,1);dummy.updateMatrix();ac.setMatrixAt(n++,dummy.matrix);}
- ac.count=n;ac.instanceMatrix.needsUpdate=true;scene.add(ac);}
+ const ac=new THREE.InstancedMesh(new THREE.IcosahedronGeometry(.06,0),new THREE.MeshStandardMaterial({color:0x6b4a24,flatShading:true}),140);let n=0;
+ for(let i=0;i<400&&n<140;i++){const a=OAK_A+(R()-.5)*.36,r=shoreR(a)+.8+R()*3.6,x=Math.cos(a)*r,z=Math.sin(a)*r;if(edgeD(x,z)<.4)continue;dummy.position.set(x,terrainH(x,z)+.03,z);dummy.rotation.set(R()*3,R()*3,0);dummy.scale.set(1,1.3,1);dummy.updateMatrix();ac.setMatrixAt(n++,dummy.matrix);ACORNS.push({x,z,m:dummy.matrix.clone(),eaten:-1});}
+ ac.count=n;ac.instanceMatrix.needsUpdate=true;scene.add(ac);acornM=ac;}
 
 /* mist */
 const mists=[];
@@ -382,7 +383,7 @@ function makeDuck(sex){
   return {g,root,head,neck,wings,feet,perch:-1,py:0,hop:null,onLand:false,yS:null,sex,x:0,z:0,h:0,spd:0,turn:0,act:null,actT:0,actDur:1,look:0,lookT:0,lookTimer:0,wakeT:0,vis:1,idle:0};
 }
 function disposeDuck(D){scene.remove(D.g);D.g.traverse(o=>{if(o.isMesh){o.material.dispose();if(o.geometry!==SG)o.geometry.dispose();}});}
-function startAct(D,a){if(D.act==='dabble'&&a!=='call')return;D.act=a;D.actT=0;D.actDur=a==='dabble'?2.6:a==='flap'?1.5:.7;
+function startAct(D,a){if(D.act==='dabble'&&a!=='call')return;D.act=a;D.actT=0;D.actDur=a==='dabble'?2.6:a==='flap'?1.5:a==='preen'?2.8:a==='display'?2.4:.7;
   if(a==='dabble'&&!D.onLand){ripple(D.x+Math.sin(D.h)*.5,D.z+Math.cos(D.h)*.5,1.6,1.8,.55);}
   if(a==='flap'&&!D.onLand&&D.perch<0){for(let i=0;i<3;i++)setTimeout(()=>ripple(D.x,D.z,2+i*.6,1.6,.45),i*260);}
   if(a==='call'){ripple(D.x,D.z,1.2,1.1,.25);}}
@@ -397,27 +398,34 @@ function poseDuck(D,dt,t){
     if(!perched){const g=groundAt(D.x,D.z,t);base=g.y;land=g.land;}
     y=lerp(H.y0,base,e)+Math.sin(Math.PI*k)*H.lift;D.yS=y;
     if(k>=1){D.hop=null;if(!land){ripple(D.x,D.z,1.4,1.4,.45);if(D===me)noiseHit(1100,.07,.3,0,0);}}}
-  else{if(D.yS==null||Math.abs(D.yS-base)>4)D.yS=base;D.yS=lerp(D.yS,base,1-Math.exp(-dt*(Math.abs(D.yS-base)>.4?3.5:12)));y=D.yS;}
+  else{const tgt=D.remoteY!=null?D.remoteY:base;D.airborne=D.remoteY!=null&&D.remoteY>base+.25;if(D.yS==null||Math.abs(D.yS-tgt)>6)D.yS=tgt;D.yS=lerp(D.yS,tgt,1-Math.exp(-dt*(D.remoteY!=null?10:Math.abs(D.yS-tgt)>.4?3.5:12)));y=D.yS;if(D.airborne)land=false;}
   D.onLand=land;
   let slope=0;
   if(!perched&&!D.hop)slope=land?(terrainH(D.x+fx*.4,D.z+fz*.4)-terrainH(D.x-fx*.4,D.z-fz*.4))/.8:(waterH(D.x+fx*.4,D.z+fz*.4,t)-waterH(D.x-fx*.4,D.z-fz*.4,t))/.8;
-  let rx=-clamp(slope,-.6,.6)*.9,rz=-D.turn*.12,hx=0,wa=D.hop?(.6+Math.sin(t*24)*.9):0,step=0;
+  let rx=-clamp(slope,-.6,.6)*.9,rz=-D.turn*.12,hx=0,wa=(D.hop||D.airborne)?(.6+Math.sin(t*24)*.9):0,step=0,lo=null,pw=0,nx=D.spd>.6?.12:0;
   if(D.act){D.actT+=dt;const k=D.actT/D.actDur;
     if(k>=1)D.act=null;
     else if(D.act==='dabble'){const e=smooth(0,.18,k)*(1-smooth(.82,1,k));
       if(land){rx+=.45*e;hx+=.55*e+Math.sin(t*15)*.3*e*(k>.25&&k<.8?1:0);}   // on land: peck at the ground
       else{rx+=1.4*e;y-=.14*e;rz+=Math.sin(t*16)*.07*e*(k>.3&&k<.75?1:0);}}   // in water: tip up
     else if(D.act==='flap'){const e=Math.sin(Math.PI*k);y+=(perched?.12:.32)*e;rx-=.75*e;wa=Math.max(wa,(.6+Math.sin(t*24)*.9)*e);hx=-.3*e;}
-    else if(D.act==='call'){const e=Math.sin(Math.PI*k);hx=-.5*e;y+=.02*e;}}
+    else if(D.act==='call'){const e=Math.sin(Math.PI*k);hx=-.5*e;y+=.02*e;}
+    else if(D.act==='preen'){const e=smooth(0,.15,k)*(1-smooth(.85,1,k));   // bill to the back (solo) or to the mate's neck (mutual)
+      lo=(D.preenAt!=null?D.preenAt:(D.preenSide||1)*2.3)*e;hx=(.3+Math.sin(t*17)*.12)*e;if(D.preenAt==null)pw=.35*e;}
+    else if(D.act==='display'){if(k<.62){const b=Math.abs(Math.sin(k/.62*Math.PI*3));hx=-.45*b;nx=-.25*b;y+=.03*b;}   // head-pumping
+      else{const e=smooth(.62,.75,k)*(1-smooth(.92,1,k));lo=(D.displaySide||1)*1.4*e;hx=.15*e;}}}   // turn the back of the head
   if(land&&!perched&&!D.hop&&D.spd>.06){const w=Math.sin(t*11),s=Math.min(1,D.spd*1.4);rz+=w*.13*s;y+=Math.abs(w)*.035*s;step=w*.7*s;}   // waddle
-  D.lookTimer-=dt;if(D.lookTimer<=0){D.lookTimer=2+Math.random()*4;D.lookT=D.spd<.2?(Math.random()-.5)*1.4:0;}
-  D.look=lerp(D.look,D.lookT,1-Math.exp(-dt*2));
+  D.idleT=(D.spd<.05&&!D.act&&!D.hop&&!D.airborne)?(D.idleT||0)+dt:0;D.tuck=roosting&&D.idleT>8;
+  if(D.tuck&&lo==null){lo=(D.preenSide||1)*2.5;hx=.4;y-=.03;}   // roosting: head tucked onto the back
+  if(lo!=null)D.look=lerp(D.look,lo,1-Math.exp(-dt*7));
+  else{D.lookTimer-=dt;if(D.lookTimer<=0){D.lookTimer=2+Math.random()*4;D.lookT=D.spd<.2?(Math.random()-.5)*1.4:0;}
+    D.look=lerp(D.look,D.lookT,1-Math.exp(-dt*2));}
   D.g.position.set(D.x,y,D.z);D.g.rotation.order='YXZ';D.g.rotation.set(rx,D.h,rz);
-  D.head.rotation.set(hx,D.look,0);D.neck.rotation.x=D.spd>.6?.12:0;
-  D.wings[0].rotation.z=-wa;D.wings[1].rotation.z=wa;
+  D.head.rotation.set(hx,D.look*.65,0);D.neck.rotation.set(nx,D.look*.35,0);
+  D.wings[0].rotation.z=-(wa+((D.preenSide||1)<0?pw:0));D.wings[1].rotation.z=wa+((D.preenSide||1)>0?pw:0);
   D.feet[0].rotation.x=step;D.feet[1].rotation.x=-step;
   const s=D.vis*1.05;D.g.scale.setScalar(Math.max(.0001,s));
-  D.wakeT-=dt;if(!land&&!D.hop&&D.spd>.22&&D.wakeT<=0&&D.vis>.5){D.wakeT=.28-Math.min(.14,D.spd*.05);ripple(D.x-fx*.55,D.z-fz*.55,.9+D.spd*.5,1.6,.18+D.spd*.1,D.warm?0xf5d79a:0xffffff);}
+  D.wakeT-=dt;if(!land&&!D.hop&&!D.airborne&&D.spd>.22&&D.wakeT<=0&&D.vis>.5){D.wakeT=.28-Math.min(.14,D.spd*.05);ripple(D.x-fx*.55,D.z-fz*.55,.9+D.spd*.5,1.6,.18+D.spd*.1,D.warm?0xf5d79a:0xffffff);}
 }
 
 /* ---------- state ---------- */
@@ -432,7 +440,7 @@ $('optDrake').addEventListener('click',()=>setSex('drake'));$('optHen').addEvent
 setSex(mySex);
 
 let started=false,camYaw=me.h,camH=1.55,camDist=4.4,manualT=0;
-let callN=0,actN=0,lastAct=null;
+let callN=0,actN=0,lastAct=null,acornsEaten=0,mutualN=0,lastMutualVerse=-999,roosting=false,lastPhase='',flapTap=-9;
 let together=parseFloat(store.get('pond.together','0'))||0;
 const remotes=new Map();
 
@@ -461,12 +469,18 @@ function duckCall(sex,vol,pan){if(!A.ctx||!A.on)return;const c=A.ctx,t=c.current
     const lf=c.createOscillator(),lg=c.createGain();lf.frequency.value=28;lg.gain.value=70;lf.connect(lg);lg.connect(o.frequency);lf.start(t);lf.stop(t+.6);}
   else{o.type='triangle';bp.frequency.value=1200;o.frequency.setValueAtTime(560*v,t);o.frequency.setValueAtTime(560*v,t+.1);o.frequency.exponentialRampToValueAtTime(1550*v,t+.24);o.frequency.exponentialRampToValueAtTime(1000*v,t+.55);env(g,t,.04,.16*vol,.62);}
   o.start(t);o.stop(t+.7);}
+function alarm(sex,vol,pan){if(!A.ctx||!A.on)return;const c=A.ctx;
+  for(let n=0;n<2;n++){const t=c.currentTime+n*.32,g=out(pan),o=c.createOscillator(),bp=c.createBiquadFilter();bp.type='bandpass';bp.Q.value=1.2;bp.frequency.value=sex==='hen'?1500:2300;o.connect(bp);bp.connect(g);
+    if(sex==='hen'){o.type='triangle';o.frequency.setValueAtTime(700,t);o.frequency.exponentialRampToValueAtTime(1900,t+.14);o.frequency.exponentialRampToValueAtTime(1300,t+.26);env(g,t,.02,.17*vol,.3);}
+    else{o.type='sine';o.frequency.setValueAtTime(1600,t);o.frequency.exponentialRampToValueAtTime(3000,t+.2);env(g,t,.02,.12*vol,.28);}
+    o.start(t);o.stop(t+.35);}}
+function wingWhirr(pan,vol){for(let i=0;i<10;i++)noiseHit(500+i*30,.05*vol,.09,i*.09,pan);}
 function noiseHit(freq,vol,dur,delay,pan){if(!A.ctx||!A.on)return;const c=A.ctx,t=c.currentTime+(delay||0),s=c.createBufferSource();s.buffer=A.white;const f=c.createBiquadFilter();f.type='bandpass';f.frequency.value=freq;f.Q.value=.9;const g=out(pan);s.connect(f);f.connect(g);env(g,t,.01,vol,dur);s.start(t);s.stop(t+dur+.05);}
 function chirp(f1,f2,t0,dur,vol){const c=A.ctx,g=out((Math.random()-.5)*1.4);const o=c.createOscillator();o.type='sine';o.frequency.setValueAtTime(f1,t0);o.frequency.linearRampToValueAtTime(f2,t0+dur);o.connect(g);env(g,t0,.03,vol,dur);o.start(t0);o.stop(t0+dur+.05);}
 const PENTA=[293.66,329.63,369.99,440,493.88,587.33,659.25];
 function audioTick(night,near){
   if(!A.ctx||!A.on)return;const c=A.ctx,t=c.currentTime;
-  if(t>A.nextNote){const f=PENTA[(Math.random()*PENTA.length)|0]*(night?.5:1);padNote(f,.045);if(near)setTimeout(()=>padNote(f*1.5,.03),700);A.nextNote=t+5+Math.random()*7;}
+  if(t>A.nextNote){const f=PENTA[(Math.random()*PENTA.length)|0]*(night?.5:1);padNote(f,.045);if(near)setTimeout(()=>padNote(f*1.5,.03),700);A.nextNote=t+(5+Math.random()*7)*(night?1.6:1);}
   if(t>A.nextBird){if(night){[0,.55,1.4].forEach((d,i)=>{const g=out(-.6),o=c.createOscillator();o.frequency.setValueAtTime(390,t+d);o.frequency.linearRampToValueAtTime(350,t+d+.4);o.connect(g);env(g,t+d,.06,i===2?.05:.04,.5);o.start(t+d);o.stop(t+d+.55);});}
     else{chirp(3950,3900,t,.32,.02);chirp(3450,3420,t+.45,.38,.018);}
     A.nextBird=t+(night?45:22)+Math.random()*30;}
@@ -571,20 +585,31 @@ function syncPeers(list){
     let r=remotes.get(p.peer);
     if(r&&r.sex!==sex){removeRemote(p.peer);r=null;}
     if(!r)r=makeRemote(p.peer,sex,d);
-    r.tx=clamp(d.x,-WORLD,WORLD);r.tz=clamp(d.z,-WORLD,WORLD);r.tp=(Number.isInteger(d.p)&&d.p>=0&&d.p<PERCHES.length)?d.p:-1;r.th=+d.h||0;r.ts=clamp(+d.s||0,0,4);
+    r.tx=clamp(d.x,-WORLD,WORLD);r.tz=clamp(d.z,-WORLD,WORLD);r.tp=(Number.isInteger(d.p)&&d.p>=0&&d.p<PERCHES.length)?d.p:-1;r.ty=typeof d.y==='number'?clamp(d.y,-2,30):null;r.th=+d.h||0;r.ts=clamp(+d.s||0,0,4);
     if(typeof d.cn==='number'&&d.cn!==r.callN){if(r.callN!==undefined)remoteCall(r);r.callN=d.cn;}
-    if(typeof d.an==='number'&&d.an!==r.actN){if(r.actN!==undefined&&(d.a==='dabble'||d.a==='flap')){startAct(r.duck,d.a);if(d.a==='dabble')noiseHit(1400,.06,.35,0,panOf(r.duck));else for(let i=0;i<5;i++)noiseHit(700,.05,.12,i*.13,panOf(r.duck));}r.actN=d.an;}
+    if(typeof d.an==='number'&&d.an!==r.actN){if(r.actN!==undefined)remoteAct(r,d.a);r.actN=d.an;}
     if(p.by&&!r.by){r.by=p.by;resolveName(r);}
   }
   for(const k of [...remotes.keys()])if(!seen.has(k))removeRemote(k);
 }
 function panOf(D){const dx=D.x-camera.position.x,dz=D.z-camera.position.z;const rel=angDiff(camYaw,Math.atan2(dx,dz));return clamp(-Math.sin(rel),-1,1)*.8;}
 function volOf(D){return 1/(1+Math.hypot(D.x-me.x,D.z-me.z)*.08);}
+function remoteAct(r,a){const D=r.duck,pn=panOf(D),v=volOf(D);
+  if(a==='dabble'){startAct(D,'dabble');if(!D.onLand)noiseHit(1400,.06*v,.35,0,pn);}
+  else if(a==='flap'){startAct(D,'flap');for(let i=0;i<5;i++)noiseHit(700,.05*v,.12,i*.13,pn);}
+  else if(a==='preen'){beginPreen(D);D.act=null;startAct(D,'preen');}
+  else if(a==='display'){D.displaySide=Math.random()<.5?-1:1;D.act=null;startAct(D,'display');}
+  else if(a==='flush'){alarm(r.sex,v,pn);wingWhirr(pn,v);}}
+function nearestOther(D){let best=null,bd=1e9;const cand=[me,...[...remotes.values()].map(r=>r.duck)];if(npc.vis>.5)cand.push(npc);
+  for(const o of cand){if(o===D)continue;const d=Math.hypot(o.x-D.x,o.z-D.z);if(d<bd){bd=d;best=o;}}return best?{o:best,d:bd}:null;}
+function beginPreen(D){const n=nearestOther(D);D.preenSide=Math.random()<.5?-1:1;D.preenAt=null;
+  if(n&&n.d<1.4){const rel=angDiff(D.h,Math.atan2(n.o.x-D.x,n.o.z-D.z));D.preenAt=clamp(rel,-2.3,2.3);D.preenSide=rel<0?-1:1;}}
 function remoteCall(r){startAct(r.duck,'call');duckCall(r.sex,volOf(r.duck),panOf(r.duck));}
 let presAcc=0,lastSent='',lastSentAt=0;
 function sendPresence(dt,force){
   if(!net||!started)return;presAcc+=dt;if(presAcc<.08&&!force)return;presAcc=0;
   const d={x:+me.x.toFixed(2),z:+me.z.toFixed(2),h:+me.h.toFixed(3),s:+me.spd.toFixed(2),sex:mySex,cn:callN,an:actN,a:lastAct,p:me.perch};
+  if(me.hop)d.y=+me.g.position.y.toFixed(2);   // altitude only while airborne
   const js=JSON.stringify(d),now=performance.now();
   if(js===lastSent&&!force&&(room||now-lastSentAt<2000))return;
   lastSent=js;lastSentAt=now;net.send(d);
@@ -610,11 +635,29 @@ cv.addEventListener('pointermove',e=>{
 function endPtr(e){if(e.pointerId===joy.id){joy.id=null;joy.x=joy.y=0;joyEl.hidden=true;}if(e.pointerId===look.id)look.id=null;}
 cv.addEventListener('pointerup',endPtr);cv.addEventListener('pointercancel',endPtr);
 cv.addEventListener('wheel',e=>{e.preventDefault();camDist=clamp(camDist+e.deltaY*.004,2.4,11);},{passive:false});
+function primaryAct(){if(me.perch>=0)return 'preen';const n=nearestOther(me);if(n&&n.d<1.3&&!me.hop)return 'preen';return me.onLand?'forage':'dabble';}
 function doAct(a){if(!started)return;initAudio();
-  if(a==='call'){callN++;startAct(me,'call');duckCall(mySex,1,0);if(npc.vis>.5&&remotes.size===0&&Math.random()<.75)npc.ai.reply=.8+Math.random()*1.2;}
-  else{if(me.act==='dabble'||me.hop||(a==='dabble'&&me.perch>=0))return;actN++;lastAct=a;startAct(me,a);
-    if(a==='dabble')noiseHit(1400,.09,.4,0,0);else for(let i=0;i<6;i++)noiseHit(650+i*40,.07,.12,i*.12,0);}
+  if(a==='dabble')a=primaryAct();
+  if(a==='call'){callN++;
+    const n=nearestOther(me);
+    if(mySex==='drake'&&n&&n.o.sex==='hen'&&n.d<5&&me.perch<0&&!me.hop){actN++;lastAct='display';me.displaySide=Math.random()<.5?-1:1;me.act=null;startAct(me,'display');}
+    else startAct(me,'call');
+    duckCall(mySex,1,0);
+    if(npc.vis>.5&&remotes.size===0&&Math.random()<.85)npc.ai.reply=.8+Math.random()*1.2;}
+  else if(a==='flap'){if(me.hop)return;
+    if(el-flapTap<.6){flapTap=-9;flush(me,true);return;}   // second tap: take off
+    flapTap=el;if(me.act==='dabble')return;actN++;lastAct='flap';startAct(me,'flap');for(let i=0;i<6;i++)noiseHit(650+i*40,.07,.12,i*.12,0);}
+  else{if(me.hop||me.act==='dabble'||me.act==='preen')return;actN++;
+    if(a==='preen'){lastAct='preen';beginPreen(me);me.act=null;startAct(me,'preen');noiseHit(3000,.02,.5,0,0);}
+    else{lastAct='dabble';me.ate=false;startAct(me,'dabble');if(a==='forage')noiseHit(2600,.03,.15,0,0);else noiseHit(1400,.09,.4,0,0);}}
   sendPresence(0,true);}
+function flushTarget(D){for(let i=0;i<30;i++){const ang=D.h+(Math.random()-.5)*(.5+i*.2),dist=22+Math.random()*16,x=D.x+Math.sin(ang)*dist,z=D.z+Math.cos(ang)*dist;
+    if(Math.abs(x)<WORLD&&Math.abs(z)<WORLD&&edgeD(x,z)<-5&&terrainH(x,z)<-1)return {x,z,h:ang};}
+  return {x:D.x*.5,z:D.z*.5,h:Math.atan2(-D.x,-D.z)};}
+function flush(D,isMe){const T=flushTarget(D);D.h=T.h;startHop(D,T.x,T.z,-1);
+  const dist=Math.hypot(T.x-D.hop.x0,T.z-D.hop.z0);D.hop.T=2.2+dist*.04;D.hop.lift=2.4+dist*.03;
+  if(isMe){actN++;lastAct='flush';alarm(mySex,1,0);wingWhirr(0,1);sendPresence(0,true);
+    if(npc.vis>.5&&remotes.size===0)setTimeout(()=>{if(!npc.hop){npc.h=Math.atan2(T.x-npc.x,T.z-npc.z);startHop(npc,T.x+1.6,T.z+.8,-1);npc.hop.T=D.hop?D.hop.T+.3:3;npc.hop.lift=2.6;}},350);}}
 [['bDabble','dabble'],['bCall','call'],['bFlap','flap']].forEach(([id,a])=>$(id).addEventListener('click',()=>doAct(a)));
 $('bPerch').addEventListener('click',()=>doPerch());
 function startHop(D,x1,z1,perchIdx,py){
@@ -642,7 +685,8 @@ const KF=[
  [.86,'#0b1020','#1a2236','#141b2a','#6070a0',.12,.32],
  [1,'#0b1020','#1a2236','#141b2a','#6070a0',.12,.32]].map(k=>({t:k[0],top:new THREE.Color(k[1]),hor:new THREE.Color(k[2]),fog:new THREE.Color(k[3]),sun:new THREE.Color(k[4]),si:k[5],amb:k[6]}));
 const CYCLE=14*60*1000,PHASE=.33;
-function dayT(){return((Date.now()%CYCLE)/CYCLE+PHASE)%1;}
+let timeOverride=null;{const q=parseFloat(new URLSearchParams(location.search).get('time'));if(q>=0&&q<1)timeOverride=q;}
+function dayT(){return timeOverride!=null?timeOverride:((Date.now()%CYCLE)/CYCLE+PHASE)%1;}
 const tmpA=new THREE.Color(),tmpB=new THREE.Color(),deepBase=new THREE.Color(0x173a33);
 function phaseName(t){return t<.22||t>=.84?'night':t<.3?'dawn':t<.45?'morning':t<.58?'midday':t<.7?'afternoon':'dusk';}
 function applySky(t){
@@ -666,9 +710,13 @@ function applySky(t){
 }
 
 /* ---------- verses ---------- */
-const VERSES=['Two wakes, one water.','The maples let go, one leaf at a time.','Nothing here is in a hurry.','The heron hasn’t moved. Neither has the light.','Breathe out. Paddle once. Drift.','Aix sponsa: the duck in wedding clothes.','Wood ducks pair up in autumn, long before spring.','Ducklings leave the nest by jumping from it.','Every ripple finds the shore eventually.'];
+const VERSES=['Two wakes, one water.','The maples let go, one leaf at a time.','Nothing here is in a hurry.','The heron hasn’t moved. Neither has the light.','Breathe out. Paddle once. Drift.','Aix sponsa: the duck in wedding clothes.','Wood ducks pair up in autumn, long before spring.','Ducklings leave the nest by jumping from it.','Every ripple finds the shore eventually.','Wood ducks are among the few ducks that perch in trees.','In autumn, acorns are a wood duck feast.'];
 let verseT=18,verseI=(Math.random()*VERSES.length)|0;
-function verseTick(dt){verseT-=dt;if(verseT<=0){const v=$('verse');v.textContent=VERSES[verseI++%VERSES.length];v.classList.add('on');setTimeout(()=>v.classList.remove('on'),7000);verseT=75+Math.random()*40;}}
+function showVerse(text){const v=$('verse');v.textContent=text;v.classList.add('on');clearTimeout(showVerse.t);showVerse.t=setTimeout(()=>v.classList.remove('on'),7000);verseT=Math.max(verseT,40);}
+function verseTick(dt){verseT-=dt;if(verseT<=0){verseT=75+Math.random()*40;showVerse(VERSES[verseI++%VERSES.length]);}}
+function togetherMoment(o){ripple(me.x,me.z,1.6,2.2,.5,0xf5d79a);ripple(o.x,o.z,1.6,2.2,.5,0xf5d79a);
+  if(A.ctx&&A.on){padNote(587.33,.05);setTimeout(()=>padNote(880,.035),400);}
+  if(el-lastMutualVerse>90){lastMutualVerse=el;showVerse('Pairs preen each other. It keeps the bond.');}}
 
 /* ---------- loop ---------- */
 const clock=new THREE.Clock();let el=0,hudAcc=0,nightNow=false;
@@ -685,7 +733,8 @@ function moveDuck(D,ix,iz,dt,max){
 function frame(){
   const dt=Math.min(clock.getDelta(),.05);el+=dt;
   waterU.uTime.value=el;swayT.value=el;
-  const t=dayT();
+  const t=dayT(),ph=phaseName(t);roosting=ph==='dusk'||ph==='night';
+  if(ph!==lastPhase){if(started&&ph==='dusk'&&lastPhase)showVerse('Dusk. Wood ducks drift into the reeds to roost.');lastPhase=ph;}
 
   // input → player
   let ix=0,iz=0;
@@ -700,9 +749,16 @@ function frame(){
 
   // remotes
   let nearest=null,nd=1e9;
-  remotes.forEach(r=>{const D=r.duck,k=1-Math.exp(-dt*7);D.x=lerp(D.x,r.tx,k);D.z=lerp(D.z,r.tz,k);const pd=D.h;D.h+=angDiff(D.h,r.th)*k;D.turn=lerp(D.turn,angDiff(pd,D.h)/Math.max(dt,.001)/3,.2);D.spd=lerp(D.spd,r.ts,k);D.perch=r.tp;if(D.perch>=0)D.py=perchPoint(PERCHES[D.perch],D.x,D.z).y;
+  remotes.forEach(r=>{const D=r.duck,k=1-Math.exp(-dt*7);D.x=lerp(D.x,r.tx,k);D.z=lerp(D.z,r.tz,k);const pd=D.h;D.h+=angDiff(D.h,r.th)*k;D.turn=lerp(D.turn,angDiff(pd,D.h)/Math.max(dt,.001)/3,.2);D.spd=lerp(D.spd,r.ts,k);D.perch=r.tp;D.remoteY=r.ty;if(D.perch>=0)D.py=perchPoint(PERCHES[D.perch],D.x,D.z).y;
     const d=Math.hypot(D.x-me.x,D.z-me.z);if(d<nd){nd=d;nearest=r;}D.warm=d<3;poseDuck(D,dt,el);});
   me.warm=nd<3;
+  // foraging: a peck on land takes the acorn under the bill
+  if(me.act==='dabble'&&me.onLand&&!me.ate&&me.actT>.55){me.ate=true;const bx=me.x+Math.sin(me.h)*.45,bz=me.z+Math.cos(me.h)*.45;let bi=-1,bd=.8;
+    ACORNS.forEach((a,i)=>{if(a.eaten<0){const d=Math.hypot(a.x-bx,a.z-bz);if(d<bd){bd=d;bi=i;}}});
+    if(bi>=0){ACORNS[bi].eaten=el;acornsEaten++;dummy.position.set(0,-50,0);dummy.scale.set(0,0,0);dummy.updateMatrix();acornM.setMatrixAt(bi,dummy.matrix);acornM.instanceMatrix.needsUpdate=true;noiseHit(3200,.05,.06,0,0);noiseHit(2800,.04,.05,.08,0);}}
+  for(let i=0;i<ACORNS.length;i++){const a=ACORNS[i];if(a.eaten>=0&&el-a.eaten>120){a.eaten=-1;acornM.setMatrixAt(i,a.m);acornM.instanceMatrix.needsUpdate=true;}}
+  // mutual preening: both preening, side by side
+  {const n=nearestOther(me);if(me.act==='preen'&&n&&n.o.act==='preen'&&n.d<1.5&&!me.mutualDone){me.mutualDone=true;mutualN++;togetherMoment(n.o);}if(me.act!=='preen')me.mutualDone=false;}
 
   // companion
   const solo=remotes.size===0;npc.vis=lerp(npc.vis,solo?1:0,1-Math.exp(-dt*1.2));
@@ -713,7 +769,8 @@ function frame(){
     if(dd>.5)moveDuck(npc,dx/dd*Math.min(1,dd*.5),dz/dd*Math.min(1,dd*.5),dt,1.7);else moveDuck(npc,0,0,dt,1.7);
     const sep=Math.hypot(npc.x-me.x,npc.z-me.z);if(sep<.9){npc.x+=(npc.x-me.x)/sep*(.9-sep);npc.z+=(npc.z-me.z)/sep*(.9-sep);}
     ai.dab-=dt;if(ai.dab<=0&&npc.spd<.4){startAct(npc,Math.random()<.8?'dabble':'flap');ai.dab=14+Math.random()*20;}
-    if(ai.reply>0){ai.reply-=dt;if(ai.reply<=0){startAct(npc,'call');duckCall(npc.sex,.7*volOf(npc),panOf(npc));}}
+    if(ai.reply>0){ai.reply-=dt;if(ai.reply<=0){const disp=npc.sex==='drake'&&mySex==='hen'&&sep<5;if(disp)npc.displaySide=Math.random()<.5?-1:1;npc.act=null;startAct(npc,disp?'display':'call');duckCall(npc.sex,.7*volOf(npc),panOf(npc));}}
+    if(me.act==='preen'&&me.actT<.15&&!npc.act&&!npc.hop&&sep<1.4){beginPreen(npc);startAct(npc,'preen');}
     poseDuck(npc,dt,el);npc.warm=sep<3;
   }else npc.g.visible=false;
   if(npc.vis>.02)npc.g.visible=true;
@@ -758,10 +815,11 @@ function frame(){
   arrow.hidden=!shownArrow;
 
   {const pb=$('bPerch'),can=started&&!me.hop&&(me.perch>=0||nearestPerch(me)>=0);if(pb.hidden===can)pb.hidden=!can;
-   const lbl=me.perch>=0?'Hop down':'Perch';if(pb.dataset.l!==lbl){pb.dataset.l=lbl;pb.firstChild.firstChild.textContent=lbl;}}
+   const lbl=me.perch>=0?'Hop down':'Perch';if(pb.dataset.l!==lbl){pb.dataset.l=lbl;pb.firstChild.firstChild.textContent=lbl;}
+   const db=$('bDabble'),pa=primaryAct(),dl=pa==='preen'?'Preen':pa==='forage'?'Forage':'Dabble';if(db.dataset.l!==dl){db.dataset.l=dl;db.firstChild.firstChild.textContent=dl;}}
   sendPresence(dt,false);peerWatchdog();
   if(started){audioTick(nightNow,me.warm);verseTick(dt);}
-  hudAcc+=dt;if(hudAcc>.5){hudAcc=0;$('hudTime').textContent=phaseName(t)+(together>5?' · together '+fmt(together):'');store.set('pond.together',together.toFixed(0));}
+  hudAcc+=dt;if(hudAcc>.5){hudAcc=0;$('hudTime').textContent=phaseName(t)+(together>5?' · together '+fmt(together):'')+(acornsEaten?' · acorns '+acornsEaten:'');store.set('pond.together',together.toFixed(0));}
   renderer.render(scene,camera);
   requestAnimationFrame(frame);
 }
@@ -775,7 +833,7 @@ $('enter').addEventListener('click',()=>{
 });
 document.addEventListener('visibilitychange',()=>{if(!A.ctx)return;if(document.hidden)A.ctx.suspend();else if(started)A.ctx.resume();});
 
-window.__pond={t:()=>el,me:()=>me,remotes:()=>[...remotes.values()].map(r=>({x:r.duck.x,z:r.duck.z,y:r.duck.g.position.y,perch:r.duck.perch,sex:r.sex,callN:r.callN,actN:r.actN,act:r.duck.act})),state:()=>netState,counts:()=>({callN,actN}),perches:()=>PERCHES.map(P=>({name:P.name,a:P.a,b:P.b})),edgeD,terrainH,camRight:()=>{const e=camera.matrixWorld.elements;return {x:e[0],z:e[2]};}};
+window.__pond={t:()=>el,acorns:()=>ACORNS.map(a=>({x:a.x,z:a.z,eaten:a.eaten>=0})),acornsEaten:()=>acornsEaten,mutualN:()=>mutualN,setTime:v=>{timeOverride=v;},me:()=>me,remotes:()=>[...remotes.values()].map(r=>({x:r.duck.x,z:r.duck.z,y:r.duck.g.position.y,perch:r.duck.perch,sex:r.sex,callN:r.callN,actN:r.actN,act:r.duck.act})),state:()=>netState,counts:()=>({callN,actN}),perches:()=>PERCHES.map(P=>({name:P.name,a:P.a,b:P.b})),edgeD,terrainH,camRight:()=>{const e=camera.matrixWorld.elements;return {x:e[0],z:e[2]};}};
 setStatus();initNet();requestAnimationFrame(frame);
 })();
 </script>
