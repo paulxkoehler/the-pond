@@ -1,6 +1,6 @@
 # The Pond
 
-A calm, two-player browser game about wood ducks (*Aix sponsa*). Pick a drake or a hen, slip into an autumn pond, and swim, dabble, call and flap your wings alongside your mate on another device. A companion of the sibling project Cormorant.
+A calm, two-player browser game about wood ducks (*Aix sponsa*). Pick a drake or a hen, slip into an autumn pond about 140 m across (with an inlet creek, two islands and an oak point), and swim, dabble, call and flap alongside your mate on another device. Like real wood ducks, you can waddle a few metres up the bank and perch on logs, a leaning snag, rocks, a stump and the nest box. A companion of the sibling project Cormorant.
 
 One self-contained `index.html`. No build step.
 
@@ -28,6 +28,7 @@ An earlier version tried direct device-to-device links (PeerJS). Those failed be
 | Dabble | Dabble button | Space |
 | Call | Call button | Q |
 | Flap | Flap button | F |
+| Perch / hop down | Perch button (appears near a log, snag, rock, stump or the nest box) | E |
 
 ## Tests
 

@@ -105,6 +105,60 @@ async def run_pair(browser, url, libs, mode, errors):
     check(f'[{mode}] dabble plays on the other screen', bool(dabble))
     return a, b
 
+
+JS_TELEPORT = """([x,z]) => { const m = window.__pond.me(); m.x = x; m.z = z; m.spd = 0; m.hop = null; m.perch = -1; m.yS = null; }"""
+JS_SHORE_POINT = """(target) => { const P = window.__pond; // walk out from the pond centre at angle 0.9 until edgeD == target
+  let lo = 20, hi = 150; for (let i = 0; i < 40; i++) { const r = (lo + hi) / 2, d = P.edgeD(Math.cos(.9)*r, Math.sin(.9)*r); if (d < target) lo = r; else hi = r; }
+  return [Math.cos(.9)*lo, Math.sin(.9)*lo]; }"""
+
+async def wait_game(p, secs, timeout=90):
+    """Wait for `secs` of in-game time. Software-rendered test browsers can run at a few frames a second,
+    and the game caps each frame's step, so wall-clock waits undercount badly."""
+    t0 = await p.evaluate('window.__pond.t()'); end = time.time() + timeout
+    while time.time() < end and (await p.evaluate('window.__pond.t()')) - t0 < secs:
+        await asyncio.sleep(0.1)
+
+async def run_extras(a, b, mode):
+    await a.bring_to_front()
+    me = lambda p: p.evaluate('(()=>{const m=window.__pond.me();return {x:m.x,z:m.z,y:m.g.position.y,perch:m.perch,onLand:m.onLand,hop:!!m.hop}})()')
+    # steering: right key moves along the camera's right vector, left key the other way
+    for key, sign, label in (('d', 1, 'right'), ('a', -1, 'left')):
+        await a.evaluate(JS_TELEPORT, [0, 0]); await wait_game(a, 1.2)
+        cr = await a.evaluate('window.__pond.camRight()'); p0 = await me(a)
+        await a.keyboard.down(key); await wait_game(a, 1.1); await a.keyboard.up(key)
+        p1 = await me(a); side = (p1['x'] - p0['x']) * cr['x'] + (p1['z'] - p0['z']) * cr['z']
+        check(f'[{mode}] {label} key moves the duck to screen-{label}', side * sign > 0.15, f'{side:+.2f} m along camera right')
+    # shore: a duck 2 m up the bank stands on land; one dropped 12 m inland is pulled back
+    pt = await a.evaluate(JS_SHORE_POINT, 2.0); await a.evaluate(JS_TELEPORT, pt); await wait_game(a, 0.7)
+    m = await me(a); gh = await a.evaluate('([x,z])=>window.__pond.terrainH(x,z)', [m['x'], m['z']])
+    check(f'[{mode}] duck can stand on the shore', m['onLand'] and m['y'] > gh + 0.15, f"onLand={m['onLand']} y={m['y']:.2f} ground={gh:.2f}")
+    pt = await a.evaluate(JS_SHORE_POINT, 12.0); await a.evaluate(JS_TELEPORT, pt); await wait_game(a, 0.4)
+    m = await me(a); d = await a.evaluate('([x,z])=>window.__pond.edgeD(x,z)', [m['x'], m['z']])
+    check(f'[{mode}] duck stays within a few metres of the water', d <= 4.6, f'{d:.2f} m past the waterline')
+    # perch on the log, partner sees it, hop down
+    log = (await a.evaluate('window.__pond.perches()'))[0]
+    mx, mz = (log['a']['x'] + log['b']['x']) / 2, (log['a']['z'] + log['b']['z']) / 2
+    await a.evaluate(JS_TELEPORT, [mx + 1.0, mz]); await wait_game(a, 0.5)
+    await a.keyboard.press('e'); await wait_game(a, 1.6)
+    m = await me(a)
+    check(f'[{mode}] perch: hops up onto the log', m['perch'] == 0 and m['y'] > 0.5, f"perch={m['perch']} y={m['y']:.2f}")
+    seen = await wait_for(lambda: _perched(b, 0), 6)
+    check(f'[{mode}] partner sees you up on the perch', bool(seen))
+    await a.keyboard.down('w'); await wait_game(a, 0.9); await a.keyboard.up('w'); await wait_game(a, 0.8)
+    m = await me(a)
+    check(f'[{mode}] pushing to swim hops back down', m['perch'] == -1 and not m['hop'], f"perch={m['perch']}")
+    # the high one: nest box roof
+    box = (await a.evaluate('window.__pond.perches()'))[4]
+    await a.evaluate(JS_TELEPORT, [box['a']['x'] - 1.2, box['a']['z']]); await wait_game(a, 0.5)
+    await a.keyboard.press('e'); await wait_game(a, 2.2)
+    m = await me(a)
+    check(f'[{mode}] perch: flies up onto the nest box', m['perch'] == 4 and m['y'] > box['a']['y'], f"y={m['y']:.2f} roof={box['a']['y']:.2f}")
+    await a.keyboard.press('e'); await wait_game(a, 1.8)
+
+async def _perched(p, idx):
+    r = await p.evaluate('window.__pond.remotes()')
+    return r and r[0]['perch'] == idx and r[0]['y'] > 0.45
+
 async def _both(a, b):
     return len(await a.evaluate('window.__pond.remotes()')) == 1 and len(await b.evaluate('window.__pond.remotes()')) == 1
 
@@ -134,6 +188,7 @@ async def main():
 
         # inside Claude
         a, b = await run_pair(browser, 'http://127.0.0.1:8765/index.html', libs, 'room', errors)
+        await run_extras(a, b, 'room')
         await b.close(run_before_unload=True)
         gone = await wait_for(lambda: _none(a), 8)
         check('[room] partner leaving clears their duck', bool(gone))
@@ -142,8 +197,9 @@ async def main():
         # Netlify path
         url = 'http://127.0.0.1:8765/index.html?relay=ws://127.0.0.1:8899&pond=test-pond'
         a, b = await run_pair(browser, url, libs, 'relay', errors)
+        await run_extras(a, b, 'relay')
         c = await open_duck(browser, url, libs, 'drake', False, errors, 'relay-C')
-        three = await wait_for(lambda: _count(c, 2), 20)
+        three = await wait_for(lambda: _count(c, 2), 60)
         check('[relay] a third duck joining sees both others', bool(three))
         d = await open_duck(browser, url.replace('test-pond', 'other-pond'), libs, 'hen', False, errors, 'relay-D')
         await d.wait_for_timeout(4000)
