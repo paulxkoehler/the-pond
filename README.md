@@ -11,11 +11,13 @@ There are two ways the ducks find each other. The game picks one by itself.
 | Where it runs | How it pairs | Notes |
 | --- | --- | --- |
 | Inside Claude (the artifact page) | The page's shared room | Both people need access to the page (Share menu). |
-| Netlify or any other host | PeerJS, by **pond name** | Type the same pond name on both devices. A pond holds two ducks. |
+| Netlify or any other host | A public relay, by **pond name** | Type the same pond name on both devices. |
 
 On the hosted version you can share a link that fills in the pond name: `https://<site>/?pond=lakeshore`.
 
-PeerJS uses its free public matchmaking server to introduce the two devices, then they talk directly. Most home Wi-Fi works. Some strict mobile networks block direct links; if a pair can't see each other, try both on the same Wi-Fi.
+On the hosted version, each duck's position goes through a free public MQTT broker (HiveMQ, with EMQX and Mosquitto as fallbacks) over a secure websocket. Because everything is relayed, it works across any two networks: home Wi-Fi, cellular, or one of each. The pond name is the channel, so pick something unlikely (`koehler-lakeshore`, not `test`). Only duck positions and actions travel; there are no names or accounts.
+
+An earlier version tried direct device-to-device links (PeerJS). Those failed between real phones and laptops on different networks, so it was replaced.
 
 ## Controls
 
@@ -29,16 +31,16 @@ PeerJS uses its free public matchmaking server to introduce the two devices, the
 
 ## Tests
 
-`tests/two_player.py` opens two headless browsers and checks that each duck appears on the other screen, follows its movement within a few centimetres, and hears its calls and dabbles. It runs both pairing paths (a stand-in for Claude's room, and PeerJS against a local matchmaking server), then checks that a third duck is turned away and that a partner can leave and rejoin.
+`tests/two_player.py` opens two headless browsers and checks that each duck appears on the other screen, follows its movement within a few centimetres, and hears its calls and dabbles. It runs both pairing paths (a stand-in for Claude's room, and the relay against a local broker), then checks that a third duck sees both others, that different pond names stay separate, and that a partner can leave and rejoin.
 
 ```sh
 pip install playwright
-npm i three@0.128.0 peerjs@1.5.4 peer@1.0.2
+npm i three@0.128.0 mqtt@5.10.1 aedes@0.51.3 aedes-server-factory@0.2.1
 python tests/two_player.py --libs ./node_modules
 ```
 
 ## Built with
 
 * three.js r128 (cdnjs)
-* PeerJS 1.5.4 (unpkg)
+* MQTT.js 5.10.1 (unpkg)
 * Web Audio for every sound: ambience, the pad, chickadees, the owl, and both duck calls

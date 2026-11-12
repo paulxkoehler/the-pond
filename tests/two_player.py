@@ -6,11 +6,12 @@ on the other screen, follows its movement, and hears its calls and dabbles.
 Two connection paths are tested:
   room  - the shared room used when the game is opened inside Claude
           (stood in for here by a small BroadcastChannel mock)
-  peer  - the pond-name pairing used on Netlify (PeerJS), against a local
-          matchmaking server, including a third duck being turned away
+  relay - the pond-name pairing used on Netlify (MQTT relay), against a local
+          broker: a third duck joining, separate ponds staying separate,
+          leaving and rejoining
 
 Usage:
-  pip install playwright && npm i three@0.128.0 peerjs@1.5.4 peer@1.0.2
+  pip install playwright && npm i three@0.128.0 mqtt@5.10.1 aedes@0.51.3 aedes-server-factory@0.2.1
   python tests/two_player.py --libs ./node_modules
 """
 import argparse, asyncio, http.server, os, subprocess, sys, threading, time
@@ -61,7 +62,7 @@ async def new_ctx(browser, libs, mock):
     ctx = await browser.new_context(viewport={'width': 900, 'height': 600})
     if mock: await ctx.add_init_script(MOCK_ROOM)
     await ctx.route('**/three.min.js', lambda r: r.fulfill(path=os.path.join(libs, 'three/build/three.min.js'), content_type='text/javascript'))
-    await ctx.route('**/peerjs.min.js', lambda r: r.fulfill(path=os.path.join(libs, 'peerjs/dist/peerjs.min.js'), content_type='text/javascript'))
+    await ctx.route('**/mqtt.min.js', lambda r: r.fulfill(path=os.path.join(libs, 'mqtt/dist/mqtt.min.js'), content_type='text/javascript'))
     await ctx.route('https://fonts.**', lambda r: r.abort())
     return ctx
 
@@ -70,7 +71,7 @@ async def open_duck(browser, url, libs, sex, mock, errors, label, ctx=None):
     ctx = ctx or await new_ctx(browser, libs, mock)
     pg = await ctx.new_page()
     pg.on('pageerror', lambda e: errors.append(f'{label}: {e}'))
-    await pg.goto(url)
+    await pg.goto(url, wait_until='domcontentloaded', timeout=60000)
     await pg.wait_for_timeout(600)  # tap in early on purpose: pairing must still start
     await pg.click('#optHen' if sex == 'hen' else '#optDrake')
     await pg.click('#enter')
@@ -122,14 +123,13 @@ async def main():
     srv = http.server.ThreadingHTTPServer(('127.0.0.1', 8765), partial(http.server.SimpleHTTPRequestHandler, directory=ROOT))
     http.server.SimpleHTTPRequestHandler.log_message = lambda *a: None
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    peer_srv = subprocess.Popen(['node', os.path.join(libs, 'peer/dist/bin/peerjs.js'), '--port', '9123', '--host', '127.0.0.1'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    relay = subprocess.Popen(['node', os.path.join(ROOT, 'tests/local_relay.js'), '8899'], env={**os.environ, 'NODE_PATH': libs}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     await asyncio.sleep(2)
 
     errors = []
     async with async_playwright() as p:
         browser = await p.chromium.launch(executable_path=args.chrome, args=[
             '--use-gl=swiftshader', '--enable-webgl', '--ignore-gpu-blocklist',
-            '--disable-features=WebRtcHideLocalIpsWithMdns', '--allow-loopback-in-peer-connection',
             '--autoplay-policy=no-user-gesture-required'])
 
         # inside Claude
@@ -140,21 +140,24 @@ async def main():
         await a.context.close()
 
         # Netlify path
-        url = 'http://127.0.0.1:8765/index.html?peer=127.0.0.1:9123&pond=test-pond'
-        a, b = await run_pair(browser, url, libs, 'peer', errors)
-        c = await open_duck(browser, url, libs, 'drake', False, errors, 'peer-C')
-        full = await wait_for(lambda: _state(c, 'full'), 12)
-        check('[peer] a third duck is turned away', bool(full), await c.evaluate('window.__pond.state()'))
-        await c.context.close()
+        url = 'http://127.0.0.1:8765/index.html?relay=ws://127.0.0.1:8899&pond=test-pond'
+        a, b = await run_pair(browser, url, libs, 'relay', errors)
+        c = await open_duck(browser, url, libs, 'drake', False, errors, 'relay-C')
+        three = await wait_for(lambda: _count(c, 2), 20)
+        check('[relay] a third duck joining sees both others', bool(three))
+        d = await open_duck(browser, url.replace('test-pond', 'other-pond'), libs, 'hen', False, errors, 'relay-D')
+        await d.wait_for_timeout(4000)
+        check('[relay] a different pond name stays separate', await _count(d, 0) and await _count(a, 2))
+        await c.context.close(); await d.context.close()
         await b.context.close()
         gone = await wait_for(lambda: _none(a), 15)
-        check('[peer] partner leaving clears their duck', bool(gone))
-        b2 = await open_duck(browser, url, libs, 'hen', False, errors, 'peer-B2')
-        back = await wait_for(lambda: _one(a), 40)
-        check('[peer] partner can rejoin the same pond', bool(back))
+        check('[relay] partner leaving clears their duck', bool(gone))
+        b2 = await open_duck(browser, url, libs, 'hen', False, errors, 'relay-B2')
+        back = await wait_for(lambda: _one(a), 20)
+        check('[relay] partner can rejoin the same pond', bool(back))
         await browser.close()
 
-    peer_srv.terminate(); srv.shutdown()
+    relay.terminate(); srv.shutdown()
     check('no script errors on any page', not errors, '; '.join(errors[:3]))
     failed = [n for n, ok in results if not ok]
     print(f'\n{len(results) - len(failed)}/{len(results)} passed')
@@ -163,5 +166,6 @@ async def main():
 async def _none(p): return len(await p.evaluate('window.__pond.remotes()')) == 0
 async def _one(p): return len(await p.evaluate('window.__pond.remotes()')) == 1
 async def _state(p, s): return (await p.evaluate('window.__pond.state()')) == s
+async def _count(p, n): return len(await p.evaluate('window.__pond.remotes()')) == n
 
 asyncio.run(main())

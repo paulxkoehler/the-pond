@@ -121,7 +121,7 @@ h1{margin:0;font-family:var(--serif);font-weight:400;font-style:italic;font-size
 <div id="arrow" hidden><span>mate</span></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <script>
 (function(){
 'use strict';
@@ -426,11 +426,9 @@ $('muteBtn').addEventListener('click',()=>{A.on=!A.on;if(A.master)A.master.gain.
 /* ---------- multiplayer ----------
    Two paths, same duck data:
    • Inside Claude: the page's shared room (presence).
-   • Anywhere else (Netlify): PeerJS, paired by pond name. Two slots per pond,
-     slot 1 dials slot 0, so a pond holds exactly two ducks. */
+   • Anywhere else (Netlify): paired by pond name through a public MQTT relay. */
 let room=null,userCap=null,net=null,netState='connecting';
-const PFX='aixsponsa-pond-v1-';
-const P={peer:null,conn:null,slot:-1,name:'',lastMsg:0,timer:null};
+const P={client:null,id:'',name:'',bi:0,peers:new Map()};
 function slug(s){return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,24)||'home';}
 function setStatus(){
   const n=remotes.size,pn=P.name||slug($('pondName').value||$('pondName').placeholder);let gate,hud;
@@ -462,45 +460,50 @@ async function initNet(){
   }catch(e){usePeerMode();}
 }
 function usePeerMode(){
-  if(typeof window.Peer!=='function'){netState='none';setStatus();return;}
+  if(typeof window.mqtt!=='object'||typeof window.mqtt.connect!=='function'){netState='none';setStatus();return;}
   netState='peer-idle';
   const q=new URLSearchParams(location.search).get('pond');
   $('pondName').value=q?slug(q):store.get('pond.name','');
   $('pondField').hidden=false;setStatus();
   if(started)startPeer();
 }
-function peerOpts(){const q=new URLSearchParams(location.search).get('peer');
-  if(q&&/^[a-z0-9.-]+:\d+$/i.test(q)){const [h,p]=q.split(':');return {host:h,port:+p,path:'/',secure:false,debug:0};}
-  return {debug:0};}
-function startPeer(){P.name=slug($('pondName').value||$('pondName').placeholder);store.set('pond.name',P.name);netState='opening';setStatus();trySlot(0);
-  if(!P.timer)P.timer=setInterval(()=>{if(P.slot===1&&P.peer&&P.peer.open&&!(P.conn&&P.conn.open))dial();},4000);}
-function trySlot(s){
-  if(P.peer){try{P.peer.destroy();}catch(e){}}
-  const pr=new window.Peer(PFX+P.name+'-'+s,peerOpts());P.peer=pr;P.slot=s;
-  pr.on('open',()=>{if(pr!==P.peer)return;netState='waiting';setStatus();
-    net={send:d=>{if(P.conn&&P.conn.open){try{P.conn.send({d});}catch(e){}}}};if(s===1)dial();});
-  pr.on('connection',c=>{if(pr!==P.peer)return;
-    const live=P.conn&&P.conn.open&&performance.now()-P.lastMsg<6000;
-    if(live){c.on('open',()=>c.close());return;}wire(c);});
-  pr.on('error',e=>{if(pr!==P.peer)return;const t=e&&e.type;
-    if(t==='unavailable-id'){if(s===0)trySlot(1);else{netState='full';setStatus();setTimeout(()=>{if(pr===P.peer&&netState==='full')trySlot(0);},8000);}}
-    else if(t==='peer-unavailable'){/* nobody in slot 0 yet; keep dialing */}
-    else if(t==='network'||t==='server-error'||t==='socket-error'||t==='socket-closed'||t==='browser-incompatible'){netState='offline';setStatus();setTimeout(()=>{if(pr===P.peer)trySlot(0);},8000);}});
-  pr.on('disconnected',()=>{if(pr===P.peer&&!pr.destroyed){try{pr.reconnect();}catch(e){}}});
+/* Public MQTT brokers over secure websockets: no accounts, relay through any NAT.
+   Every client tries them in the same order, so a pair lands on the same one. */
+const BROKERS=['wss://broker.hivemq.com:8884/mqtt','wss://broker.emqx.io:8084/mqtt','wss://test.mosquitto.org:8081/mqtt'];
+function brokerList(){const q=new URLSearchParams(location.search).get('relay');return q&&/^wss?:\/\/[a-z0-9.:-]+(\/[a-z0-9\/_-]*)?$/i.test(q)?[q]:BROKERS;}
+function startPeer(){
+  if(P.client)return;
+  P.name=slug($('pondName').value||$('pondName').placeholder);store.set('pond.name',P.name);
+  P.id=Math.random().toString(36).slice(2,10);netState='opening';setStatus();connectRelay(0);
 }
-function dial(){if(P.conn&&P.conn.open)return;const c=P.peer.connect(PFX+P.name+'-0',{serialization:'json'});wire(c);}
-function wire(c){
-  if(P.conn&&P.conn!==c){try{P.conn.close();}catch(e){}}
-  P.conn=c;
-  c.on('open',()=>{if(c!==P.conn)return;P.lastMsg=performance.now();lastSent='';sendPresence(0,true);});
-  c.on('data',m=>{if(c!==P.conn||!m||typeof m!=='object'||!m.d)return;P.lastMsg=performance.now();
-    syncPeers([{peer:'p2p',presence:{d:m.d},kind:'viewer',sameTab:false,by:null}]);});
-  c.on('close',()=>{if(c!==P.conn)return;P.conn=null;syncPeers([]);if(netState!=='full'){netState='waiting';setStatus();}});
-  c.on('error',()=>{});
+function relayBase(){return 'aixsponsa/thepond/v1/'+P.name+'/';}
+function connectRelay(i){
+  const list=brokerList(),url=list[i%list.length],base=relayBase();let ok=false,dead=false;
+  const c=window.mqtt.connect(url,{clientId:'pond_'+P.id+'_'+i,clean:true,keepalive:20,reconnectPeriod:0,connectTimeout:7000,
+    will:{topic:base+P.id,payload:'{"bye":1}',qos:0,retain:false}});
+  P.client=c;
+  c.on('connect',()=>{if(c!==P.client)return;ok=true;P.bi=i;
+    c.subscribe(base+'+',{qos:0});
+    net={send:d=>{if(c.connected){try{c.publish(base+P.id,JSON.stringify({d}),{qos:0});}catch(e){}}}};
+    netState='waiting';setStatus();lastSent='';sendPresence(0,true);});
+  c.on('message',(topic,buf)=>{if(c!==P.client)return;const pid=topic.slice(base.length);
+    if(pid===P.id||!/^[a-z0-9]{1,12}$/.test(pid))return;
+    let m;try{m=JSON.parse(new TextDecoder().decode(buf));}catch(e){return;}
+    if(m&&m.bye)P.peers.delete(pid);else if(m&&m.d&&typeof m.d==='object'){const isNew=!P.peers.has(pid);P.peers.set(pid,{d:m.d,t:performance.now()});if(isNew){lastSent='';sendPresence(0,true);}}
+    pushPeers();});
+  const fail=()=>{if(dead||c!==P.client)return;dead=true;try{c.end(true);}catch(e){}net=null;
+    if(!ok&&(i+1)%list.length!==0){connectRelay(i+1);return;}
+    P.peers.clear();pushPeers();netState='offline';setStatus();
+    setTimeout(()=>{if(c===P.client)connectRelay(ok?i:0);},ok?2500:8000);};
+  c.on('error',fail);c.on('close',fail);c.on('offline',fail);
 }
+function pushPeers(){syncPeers([...P.peers].map(([pid,v])=>({peer:'m_'+pid,presence:{d:v.d},kind:'viewer',sameTab:false,by:null})));}
 function peerWatchdog(){
-  if(P.conn&&P.conn.open&&performance.now()-P.lastMsg>10000){const c=P.conn;P.conn=null;try{c.close();}catch(e){}syncPeers([]);if(netState!=='full'){netState='waiting';setStatus();}}
+  if(!P.peers.size)return;const now=performance.now();let gone=false;
+  P.peers.forEach((v,k)=>{if(now-v.t>8000){P.peers.delete(k);gone=true;}});
+  if(gone)pushPeers();
 }
+addEventListener('pagehide',()=>{const c=P.client;if(c&&c.connected){try{c.publish(relayBase()+P.id,'{"bye":1}',{qos:0});}catch(e){}}});
 function makeRemote(peer,sex,d){
   const D=makeDuck(sex);D.x=d.x;D.z=d.z;D.h=d.h;
   const tag=document.createElement('div');tag.className='tag';tag.textContent='your mate';document.body.appendChild(tag);
