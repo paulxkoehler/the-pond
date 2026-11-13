@@ -4,6 +4,13 @@ A calm, two-player browser game about wood ducks (*Aix sponsa*). Pick a drake or
 
 One self-contained `index.html`. No build step.
 
+## Play
+
+* GitHub Pages: https://paulxkoehler.github.io/the-pond/
+* Netlify: https://the-pond-ducks.netlify.app/
+
+Add `?pond=<name>` to share a pond, e.g. `https://paulxkoehler.github.io/the-pond/?pond=lakeshore`.
+
 ## Playing together
 
 There are two ways the ducks find each other. The game picks one by itself.
